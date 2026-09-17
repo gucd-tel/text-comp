@@ -480,6 +480,31 @@ input {
   display: none;
 }
 
+.image-zoom-controls {
+  display: none;
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 25;
+  align-items: center;
+  gap: 6px;
+}
+
+.render-mode .image-zoom-controls {
+  display: flex;
+}
+
+.image-zoom-level {
+  min-width: 42px;
+  padding: 5px 2px;
+  border-radius: 6px;
+  background-color: rgba(22, 23, 29, 0.92);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  text-align: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
 .panel-action-btn {
   width: 28px;
   height: 28px;
@@ -504,6 +529,11 @@ input {
 .panel-action-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.image-zoom-btn {
+  font-size: 1.2rem;
+  line-height: 1;
 }
 
 /* (Pane Header styles removed) */
@@ -551,6 +581,7 @@ input {
 
 .rendered-view.image-rendered-view {
   padding: 8px;
+  overflow-x: auto;
 }
 
 /* Split Column / Divider */
@@ -708,7 +739,8 @@ input {
 }
 
 .rendered-images {
-  width: 100%;
+  width: var(--image-width, 100%);
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;

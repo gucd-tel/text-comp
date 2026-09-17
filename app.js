@@ -2,6 +2,9 @@ const DEFAULT_PANEL_COUNT = 2;
 const BASE_MIN_PANEL_PERCENT = 10;
 const PANEL_TYPE_TEXT = 'text';
 const PANEL_TYPE_IMAGES = 'images';
+const IMAGE_ZOOM_MIN = 50;
+const IMAGE_ZOOM_MAX = 300;
+const IMAGE_ZOOM_STEP = 25;
 const STORAGE_CODEC_KEY = 'comparator-storage-v1';
 const APP_VERSION = window.__COMPARATOR_ASSET_VERSION__ || 'dev';
 
@@ -87,6 +90,7 @@ function createPanel(type = PANEL_TYPE_TEXT) {
     id: createPanelId(),
     type: type === PANEL_TYPE_IMAGES ? PANEL_TYPE_IMAGES : PANEL_TYPE_TEXT,
     text: '',
+    imageZoom: 100,
     editorScrollTop: 0,
     renderScrollTop: 0
   };
@@ -301,6 +305,9 @@ function normalizePanels(value) {
       id: typeof panel.id === 'string' && panel.id ? panel.id : createPanelId(),
       type: panel.type === PANEL_TYPE_IMAGES ? PANEL_TYPE_IMAGES : PANEL_TYPE_TEXT,
       text: typeof panel.text === 'string' ? panel.text : '',
+      imageZoom: Number.isFinite(Number(panel.imageZoom))
+        ? Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, Math.round(Number(panel.imageZoom) / IMAGE_ZOOM_STEP) * IMAGE_ZOOM_STEP))
+        : 100,
       editorScrollTop: Number.isFinite(Number(panel.editorScrollTop)) ? Math.max(0, Number(panel.editorScrollTop)) : 0,
       renderScrollTop: Number.isFinite(Number(panel.renderScrollTop)) ? Math.max(0, Number(panel.renderScrollTop)) : 0
     }));
@@ -947,6 +954,11 @@ function createPaneMarkup(panel, index) {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" width="14" height="14"><path d="M3 6h18"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
         </button>
       </div>
+      ${isImagePanel ? `<div class="image-zoom-controls" role="group" aria-label="Image zoom">
+        <button class="panel-action-btn image-zoom-btn" type="button" data-panel-action="zoom-out" title="Zoom out" aria-label="Zoom out image panel"${panel.imageZoom <= IMAGE_ZOOM_MIN ? ' disabled' : ''}>−</button>
+        <span class="image-zoom-level" role="status">${panel.imageZoom}%</span>
+        <button class="panel-action-btn image-zoom-btn" type="button" data-panel-action="zoom-in" title="Zoom in" aria-label="Zoom in image panel"${panel.imageZoom >= IMAGE_ZOOM_MAX ? ' disabled' : ''}>+</button>
+      </div>` : ''}
       <div class="pane-content editor-view${hiddenEditorClass}">
         <textarea class="code-editor${editorTypeClass}" aria-label="${editorLabel}" placeholder="${editorPlaceholder}" spellcheck="false"></textarea>
       </div>
@@ -1112,6 +1124,29 @@ function movePanelById(panelId, direction) {
   }
 }
 
+function zoomImagePanel(panelId, direction) {
+  const panel = panels.find((item) => item.id === panelId && item.type === PANEL_TYPE_IMAGES);
+
+  if (!panel) {
+    return;
+  }
+
+  const nextZoom = Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, panel.imageZoom + direction * IMAGE_ZOOM_STEP));
+
+  if (nextZoom === panel.imageZoom) {
+    return;
+  }
+
+  const dirtyOnStart = isDirty;
+  panel.imageZoom = nextZoom;
+  const pane = elements.workspace.querySelector(`[data-panel-id="${panelId}"]`);
+  pane.querySelector('.rendered-images').style.setProperty('--image-width', `${nextZoom}%`);
+  pane.querySelector('.image-zoom-level').textContent = `${nextZoom}%`;
+  pane.querySelector('[data-panel-action="zoom-out"]').disabled = nextZoom === IMAGE_ZOOM_MIN;
+  pane.querySelector('[data-panel-action="zoom-in"]').disabled = nextZoom === IMAGE_ZOOM_MAX;
+  persistTransientPanelState(dirtyOnStart);
+}
+
 function handlePanelActionClick(e) {
   const button = e.target.closest('.panel-action-btn');
 
@@ -1139,6 +1174,10 @@ function handlePanelActionClick(e) {
     });
   } else if (button.dataset.panelAction === 'clear') {
     clearPanelById(panelId);
+  } else if (button.dataset.panelAction === 'zoom-out') {
+    zoomImagePanel(panelId, -1);
+  } else if (button.dataset.panelAction === 'zoom-in') {
+    zoomImagePanel(panelId, 1);
   }
 }
 
@@ -1166,6 +1205,9 @@ function renderWorkspace() {
     const pane = elements.workspace.querySelector(`[data-panel-id="${panel.id}"]`);
     const textarea = pane.querySelector('textarea');
     const renderedView = pane.querySelector('.rendered-view');
+    if (panel.type === PANEL_TYPE_IMAGES) {
+      pane.querySelector('.rendered-images').style.setProperty('--image-width', `${panel.imageZoom}%`);
+    }
     textarea.value = panel.text;
     textarea.addEventListener('input', () => setDirty(true));
     textarea.addEventListener('keydown', handleTextareaTab);
