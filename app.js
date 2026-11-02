@@ -35,6 +35,7 @@ const elements = {
   btnRemoveEntry: document.getElementById('btn-remove-entry'),
   btnModeEdit: document.getElementById('btn-mode-edit'),
   btnModeRender: document.getElementById('btn-mode-render'),
+  btnTheme: document.getElementById('btn-theme'),
   btnSave: document.getElementById('btn-save'),
   btnSaveText: document.querySelector('.save-btn-text'),
   btnAddPanel: document.getElementById('btn-add-panel'),
@@ -1921,6 +1922,11 @@ function removeActiveEntry() {
 }
 
 function setupListeners() {
+  elements.btnTheme.addEventListener('click', () => {
+    const light = document.documentElement.dataset.theme !== 'light';
+    applyTheme(light);
+    safeSetLocalStorageItem('text_comp_theme', light ? 'light' : 'dark');
+  });
   elements.btnSave.addEventListener('click', saveAllData);
   elements.groupSelect.addEventListener('change', handleGroupChange);
   elements.entrySelect.addEventListener('change', handleEntryChange);
@@ -2035,6 +2041,7 @@ function setupListeners() {
 }
 
 function init() {
+  applyTheme(document.documentElement.dataset.theme === 'light');
   checkForAppUpdate();
   library = loadLibrary();
   applyUrlLibrarySelection();
@@ -2048,6 +2055,14 @@ function init() {
   renderWorkspace();
   setViewMode(viewMode);
   setDirty(false);
+}
+
+function applyTheme(light) {
+  document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  elements.btnTheme.setAttribute('aria-pressed', String(light));
+  elements.btnTheme.title = light ? 'Switch to dark mode' : 'Switch to light mode';
+  elements.btnTheme.setAttribute('aria-label', elements.btnTheme.title);
+  elements.btnTheme.lastChild.textContent = light ? ' Dark mode' : ' Light mode';
 }
 
 if (document.readyState === 'loading') {
