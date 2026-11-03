@@ -487,6 +487,21 @@ input {
   position: relative;
 }
 
+.image-pane.image-drag-over::after {
+  content: 'Drop images here';
+  position: absolute;
+  inset: 8px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent-blue);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  font-weight: 600;
+  pointer-events: none;
+}
+
 .delete-panel-mode .pane {
   cursor: pointer;
 }

@@ -6,6 +6,7 @@ const IMAGE_ZOOM_MIN = 50;
 const IMAGE_ZOOM_MAX = 300;
 const IMAGE_ZOOM_STEP = 25;
 const STORAGE_CODEC_KEY = 'comparator-storage-v1';
+const LOCAL_IMAGE_PREFIX = 'local-image:';
 const APP_VERSION = window.__COMPARATOR_ASSET_VERSION__ || 'dev';
 
 const STORAGE_KEYS = {
@@ -597,6 +598,11 @@ function parseImagePanelText(text) {
       return;
     }
 
+    if (/^local-image:[a-zA-Z0-9-]+$/.test(value)) {
+      urls.push(value);
+      return;
+    }
+
     try {
       const url = new URL(value);
 
@@ -613,6 +619,49 @@ function parseImagePanelText(text) {
   return { urls, invalidLines };
 }
 
+function openImageDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('comparator-images', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('images');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('Image storage is blocked by another tab.'));
+  });
+}
+
+async function storeImageFiles(files) {
+  const db = await openImageDatabase();
+  try {
+    const ids = files.map(() => createPanelId());
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('images', 'readwrite');
+      const store = transaction.objectStore('images');
+      files.forEach((file, index) => store.put(file, ids[index]));
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('Image storage was interrupted.'));
+    });
+    return ids.map((id) => LOCAL_IMAGE_PREFIX + id);
+  } finally {
+    db.close();
+  }
+}
+
+async function readStoredImage(id) {
+  const db = await openImageDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction('images', 'readonly');
+      const request = transaction.objectStore('images').get(id);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      transaction.onabort = () => reject(transaction.error || new Error('Image storage was interrupted.'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
 function loadImagePanelItem(item, url, pageNumber, onSettled = null) {
   const image = document.createElement('img');
   image.className = 'image-panel-image';
@@ -620,18 +669,23 @@ function loadImagePanelItem(item, url, pageNumber, onSettled = null) {
   image.loading = 'eager';
   image.decoding = 'async';
 
+  let objectUrl = null;
   image.addEventListener('load', () => {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
     if (onSettled) {
       onSettled();
     }
   }, { once: true });
 
   image.addEventListener('error', () => {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
     const placeholder = document.createElement('div');
     placeholder.className = 'image-load-failure';
 
     const title = document.createElement('strong');
-    title.textContent = `Page ${pageNumber} failed to load`;
+    title.textContent = url.startsWith(LOCAL_IMAGE_PREFIX)
+      ? `Page ${pageNumber}: stored image is missing or invalid`
+      : `Page ${pageNumber} failed to load`;
 
     const urlText = document.createElement('span');
     urlText.className = 'image-load-failure-url';
@@ -656,7 +710,15 @@ function loadImagePanelItem(item, url, pageNumber, onSettled = null) {
   }, { once: true });
 
   item.replaceChildren(image);
-  image.src = url;
+  if (url.startsWith(LOCAL_IMAGE_PREFIX)) {
+    readStoredImage(url.slice(LOCAL_IMAGE_PREFIX.length)).then((blob) => {
+      if (!(blob instanceof Blob)) throw new Error('Stored image is unavailable.');
+      objectUrl = URL.createObjectURL(blob);
+      image.src = objectUrl;
+    }).catch(() => image.dispatchEvent(new Event('error')));
+  } else {
+    image.src = url;
+  }
 }
 
 function renderImagePanel(text, target) {
@@ -674,7 +736,7 @@ function renderImagePanel(text, target) {
       ? `${visibleLines}, and ${remainingCount} more`
       : visibleLines;
 
-    warning.textContent = `${invalidLines.length} invalid image ${invalidLines.length === 1 ? 'link was' : 'links were'} skipped (line${invalidLines.length === 1 ? '' : 's'} ${lineSummary}). Use one http:// or https:// URL per line.`;
+    warning.textContent = `${invalidLines.length} invalid image ${invalidLines.length === 1 ? 'entry was' : 'entries were'} skipped (line${invalidLines.length === 1 ? '' : 's'} ${lineSummary}). Use one image link or stored image entry per line.`;
     target.appendChild(warning);
   }
 
@@ -936,11 +998,11 @@ function createPaneMarkup(panel, index) {
     ? `Image panel ${index + 1} URL editor`
     : `Panel ${index + 1} text editor`;
   const editorPlaceholder = isImagePanel
-    ? 'Paste one CDN image URL per line...'
+    ? 'Paste or drop images here, or enter one image URL per line...'
     : 'Paste or type text here...';
 
   return `
-    <section class="pane${paneTypeClass}" data-panel-id="${panel.id}" data-panel-type="${panel.type}">
+    <section class="pane${paneTypeClass}" data-panel-id="${panel.id}" data-panel-type="${panel.type}"${isImagePanel ? ' tabindex="0" aria-label="Image panel: paste or drop images"' : ''}>
       <div class="panel-actions" aria-label="Panel actions">
         <button class="panel-action-btn" type="button" data-panel-action="move-left" title="Move panel left" aria-label="Move panel left"${moveLeftDisabled}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" width="14" height="14"><path d="m15 18-6-6 6-6"></path></svg>
@@ -1035,6 +1097,7 @@ function schedulePanelScrollSave(panelId, source, scrollTop) {
 }
 
 function handleTextareaPaste(e) {
+  if (Array.from(e.clipboardData?.files || []).some((file) => file.type.startsWith('image/'))) return;
   const textarea = e.target;
   const pane = textarea.closest('.pane');
   const panelId = pane ? pane.dataset.panelId : null;
@@ -1049,6 +1112,67 @@ function handleTextareaPaste(e) {
     textarea.scrollTop = 0;
     updatePanelScroll(panelId, 'editor', 0);
   });
+}
+
+async function addImagesToPanel(panelId, files) {
+  const images = files.filter((file) => file.type.startsWith('image/'));
+  if (!images.length) {
+    alert('Please choose image files.');
+    return;
+  }
+
+  if (images.length !== files.length) {
+    alert('Only image files will be added.');
+  }
+
+  try {
+    const entries = await storeImageFiles(images);
+    const panel = panels.find((item) => item.id === panelId && item.type === PANEL_TYPE_IMAGES);
+    const pane = elements.workspace.querySelector(`[data-panel-id="${panelId}"]`);
+    if (!panel || !pane) {
+      alert('The image panel changed before the images could be added. Please try again.');
+      return;
+    }
+    const textarea = pane.querySelector('textarea');
+    const separator = textarea.value && !textarea.value.endsWith('\n') ? '\n' : '';
+    textarea.value += separator + entries.join('\n');
+    panel.text = textarea.value;
+    setDirty(true);
+    if (!saveAllData()) {
+      alert('The images were stored, but the panel could not be saved. Please free browser storage and try Save again.');
+    }
+    if (viewMode === 'render') performRender();
+  } catch (error) {
+    console.warn('Unable to store images.', error);
+    alert('Could not save the images in this browser. Check available browser storage and try again.');
+  }
+}
+
+function handleImagePaste(event) {
+  const files = Array.from(event.clipboardData?.files || []);
+  if (!files.some((file) => file.type.startsWith('image/'))) return;
+  event.preventDefault();
+  event.stopPropagation();
+  addImagesToPanel(event.currentTarget.dataset.panelId, files);
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function handleImageDragOver(event) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+  event.currentTarget.classList.add('image-drag-over');
+}
+
+function handleImageDrop(event) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.classList.remove('image-drag-over');
+  addImagesToPanel(event.currentTarget.dataset.panelId, Array.from(event.dataTransfer.files));
 }
 
 async function copyPanelById(panelId) {
@@ -1208,6 +1332,12 @@ function renderWorkspace() {
     const renderedView = pane.querySelector('.rendered-view');
     if (panel.type === PANEL_TYPE_IMAGES) {
       pane.querySelector('.rendered-images').style.setProperty('--image-width', `${panel.imageZoom}%`);
+      pane.addEventListener('paste', handleImagePaste);
+      pane.addEventListener('dragover', handleImageDragOver);
+      pane.addEventListener('dragleave', (event) => {
+        if (!pane.contains(event.relatedTarget)) pane.classList.remove('image-drag-over');
+      });
+      pane.addEventListener('drop', handleImageDrop);
     }
     textarea.value = panel.text;
     textarea.addEventListener('input', () => setDirty(true));
@@ -1922,6 +2052,9 @@ function removeActiveEntry() {
 }
 
 function setupListeners() {
+  ['dragover', 'drop'].forEach((type) => document.addEventListener(type, (event) => {
+    if (hasDraggedFiles(event)) event.preventDefault();
+  }));
   elements.btnTheme.addEventListener('click', () => {
     const light = document.documentElement.dataset.theme !== 'light';
     applyTheme(light);
